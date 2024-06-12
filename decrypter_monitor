@@ -1,0 +1,65 @@
+class decrypter_monitor extends uvm_monitor;
+  virtual dut_if vif;
+  uvm_analysis_port#(my_seq_item) item_collected_port;
+  
+  `uvm_component_utils(my_monitor)
+  
+  function new(string name = "my_monitor", uvm_component parent);
+    super.new(name, parent);
+    item_collected_port = new("item_collected_port", this);
+  endfunction
+  
+  virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    if(!uvm_config_db#(virtual dut_if)::get(this, "", "vif", vif))
+      `uvm_error("my_monitor", "virtual interface must be set for vif!!!")
+  endfunction
+  
+  virtual task run_phase(uvm_phase phase);
+    forever begin
+      @(posedge vif.clk);
+      if(vif.done) begin
+        my_seq_item item = my_seq_item::type_id::create("item");
+        collect_message(item);
+        item_collected_port.write(item);
+      end
+    end
+  endtask
+  
+  virtual task collect_message(my_seq_item item);
+    logic [7:0] in_buffer [$];
+    logic [7:0] out_buffer [$];
+    int in_length = 0;
+    int out_length = 0;
+    
+    // 收集写入的数据
+    for(int i=0; i<64; i++) begin
+      @(posedge vif.clk);
+      if(vif.wr_en) begin
+        in_buffer.push_back(vif.data_in);
+        in_length++;
+      end
+    end
+    
+    // 收集读出的数据
+    for(int i=0; i<64; i++) begin
+      logic [7:0] data;
+      @(posedge vif.clk);
+      vif.raddr <= i;
+      @(posedge vif.clk);
+      data = vif.data_out;
+      if(data !== 8'hxx) begin  // 忽略未定义的值
+        out_buffer.push_back(data);
+        out_length++; 
+      end
+    end
+    
+    // 填充item
+    item.in_length = in_length;
+    item.out_length = out_length;
+    item.in_msg = new[in_length];
+    item.out_msg = new[out_length];
+    for(int i=0; i<in_length; i++) item.in_msg[i] = in_buffer[i];
+    for(int i=0; i<out_length; i++) item.out_msg[i] = out_buffer[i];
+  endtask
+endclass
